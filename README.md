@@ -19,3 +19,5 @@ git clone https://github.com/ваш-username/chef-ai-bot.git
 cd chef-ai-bot
 pip install -r requirements.txt
 python bot/main.py
+
+1
