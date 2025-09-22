@@ -9,19 +9,21 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 
 # ============ НАСТРОЙКИ ============
-TOKEN = "8356413290:AAGvwTj0fK8_QxwwrPHhB7Kdw6UlblbmECE"  # Замените вашим токеном
+TOKEN = "8356413290:AAGvwTj0fK8_QxwwrPHhB7Kdw6UlblbmECE"  # Замените на токен вашего Telegram бота
 DB_PATH = "fridge.db"
 
 AI_API_URL = os.getenv("AI_API_URL", "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateText")
-AI_API_KEY = os.getenv("AAIzaSyCfL3fE_eQSg2S0BPfaXe0uD4OmuGUkHUc", "")
+AI_API_KEY = os.getenv("AI_API_KEY", "")
 AI_MODEL = os.getenv("AI_MODEL", "gemini-2.5-flash")
 
+# ============ ЛОГИ ============
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
 
+# ============ БАЗА ДАННЫХ ============
 conn = sqlite3.connect(DB_PATH, check_same_thread=False)
 cur = conn.cursor()
 cur.execute("""
@@ -35,6 +37,7 @@ CREATE TABLE IF NOT EXISTS products (
 """)
 conn.commit()
 
+# ============ ЛОКАЛЬНЫЕ РЕЦЕПТЫ ============
 RECIPES = [
     {"title": "Паста с томатами", "ingredients": ["спагетти", "помидоры", "чеснок", "оливковое масло", "соль"], "steps": ["Отварить пасту до аль денте", "Обжарить чеснок и помидоры на оливковом масле", "Смешать с пастой и посолить"]},
     {"title": "Омлет с сыром", "ingredients": ["яйца", "сыр", "сливочное масло", "соль"], "steps": ["Взбить яйца с щепоткой соли", "Растопить масло на сковороде", "Вылить яйца, добавить сыр и довести до готовности"]},
@@ -96,7 +99,8 @@ async def ask_ai_for_recipe(ingredients=None):
         async with aiohttp.ClientSession() as session:
             async with session.post(AI_API_URL, json=payload, headers=headers, timeout=60) as resp:
                 text_resp = await resp.text()
-                logger.info(f"Ответ AI: статус {resp.status} тело {text_resp}")
+                logger.info(f"Ответ AI статус: {resp.status}")
+                logger.info(f"Ответ AI тело: {text_resp}")
                 if resp.status != 200:
                     r = random.choice(RECIPES)
                     return format_recipe_local(r)
@@ -111,25 +115,29 @@ async def ask_ai_for_recipe(ingredients=None):
         r = random.choice(RECIPES)
         return format_recipe_local(r)
 
-async def start(update, context):
+# ============ КОМАНДЫ И КНОПКИ ============
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
-        [InlineKeyboardButton("Рандомные рецепты (ИИ)", callback_data="random_recipe")],
-        [InlineKeyboardButton("Рецепт из моих продуктов", callback_data="my_recipe")],
+        [InlineKeyboardButton("Запустить Cook Bro", callback_data="cookbro")],
+        [InlineKeyboardButton("/premium Перейти на PRO за 1 ₽", callback_data="premium")],
+        [InlineKeyboardButton("/profile Личный кабинет", callback_data="profile")]
     ]
-    await update.message.reply_text("Привет! Я ваш помощник по холодильнику.\nКоманды: /add, /list, /del, /help", reply_markup=InlineKeyboardMarkup(keyboard))
+    markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "Меню:",
+        reply_markup=markup
+    )
 
-async def help_command(update, context):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Команды:\n"
         "/add <название> <YYYY-MM-DD> — добавить продукт\n"
         "/list — показать список\n"
         "/del <id> — удалить по ID\n"
-        "Кнопки:\n"
-        "• Рандомные рецепты (ИИ) — идея блюда\n"
-        "• Рецепт из моих продуктов — учитывает ваш список"
+        "Используйте кнопки в меню для навигации."
     )
 
-async def add_command(update, context):
+async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text("Использование: /add <название> <YYYY-MM-DD>")
         return
@@ -147,7 +155,7 @@ async def add_command(update, context):
     conn.commit()
     await update.message.reply_text(f"Добавлено: {name} со сроком до {expiry}")
 
-async def list_command(update, context):
+async def list_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     rows = cur.execute("SELECT id, name, expiry_date FROM products WHERE user_id = ? ORDER BY expiry_date ASC", (user_id,)).fetchall()
     if not rows:
@@ -156,7 +164,7 @@ async def list_command(update, context):
     lines = [f"{r[0]}. {r[1]} — до {r[2]}" for r in rows]
     await update.message.reply_text("\n".join(lines))
 
-async def del_command(update, context):
+async def del_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) != 1 or not context.args[0].isdigit():
         await update.message.reply_text("Использование: /del <id> (id смотрите в /list)")
         return
@@ -169,35 +177,35 @@ async def del_command(update, context):
     else:
         await update.message.reply_text("Запись не найдена.")
 
-async def echo(update, context):
+async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Вы написали: {update.message.text}")
 
-async def on_callback(update, context):
+# Обработчик callback кнопок
+async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    user_id = query.from_user.id
-    if query.data == "random_recipe":
-        text = await ask_ai_for_recipe()
-        keyboard = [[InlineKeyboardButton("Ещё рецепт (ИИ)", callback_data="random_recipe")]]
-        if query.message.text != text:
-            await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard))
-    elif query.data == "my_recipe":
-        rows = cur.execute("SELECT DISTINCT name FROM products WHERE user_id = ? ORDER BY name", (user_id,)).fetchall()
-        ingredients = [r[0] for r in rows] if rows else None
-        text = await ask_ai_for_recipe(ingredients)
-        keyboard = [[InlineKeyboardButton("Ещё (из моих)", callback_data="my_recipe")]]
-        if query.message.text != text:
-            await query.edit_message_text(text=text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+    if query.data == "cookbro":
+        await query.edit_message_text("Добро пожаловать в Cook Bro! Выберите команду или кнопку.")
+    elif query.data == "premium":
+        await query.edit_message_text("Перейти на PRO версию за 1 ₽. Подробнее скоро...")
+    elif query.data == "profile":
+        await query.edit_message_text("Ваш личный кабинет в разработке.")
+    else:
+        await query.edit_message_text("Неизвестная команда.")
 
 def main():
     app = Application.builder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("add", add_command))
     app.add_handler(CommandHandler("list", list_command))
     app.add_handler(CommandHandler("del", del_command))
+
     app.add_handler(CallbackQueryHandler(on_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
+
     app.run_polling()
 
 if __name__ == "__main__":
