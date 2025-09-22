@@ -20,4 +20,4 @@ cd chef-ai-bot
 pip install -r requirements.txt
 python bot/main.py
 
-1
+12
